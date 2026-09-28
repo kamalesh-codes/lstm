@@ -1,13 +1,13 @@
 model:
-  embed_size: 64
-  hidden_size: 256
-  num_layers: 2
-  seq_length: 100
+  embed_size: 256
+  hidden_size: 512
+  num_layers: 3
+  seq_length: 256
 
 training:
-  batch_size: 64
-  learning_rate: 0.002
-  epochs: 10
+  batch_size: 128
+  learning_rate: 0.001
+  epochs: 20
   val_split: 0.1
 
 paths:
