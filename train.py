@@ -88,12 +88,17 @@ def train(cfg: DictConfig):
     plot_save_path = os.path.join(plot_dir, cfg.paths.plot_save_path)
     checkpoint_dir = os.path.join(orig_cwd, cfg.paths.checkpoint_dir)
 
+    # 1. Ensure data is available (only Rank 0 downloads)
     if os.environ.get("LOCAL_RANK", "0") == "0":
         ensure_data(data_path)
 
+    # 2. Setup distributed environment
     local_rank = setup()
+    # Crucial: Block all processes until the data download is complete
+    dist.barrier() 
     device = torch.device(f'cuda:{local_rank}')
 
+    # 3. Load data and compute vocab (Must be identical across ranks)
     with open(data_path, 'r', encoding='utf-8') as f:
         full_text = f.read()
     
@@ -104,6 +109,9 @@ def train(cfg: DictConfig):
     train_dataset = PoetryDataset(train_text, cfg.model.seq_length)
     vocab_size = train_dataset.vocab_size
     
+    if local_rank == 0:
+        print(f"Vocab size detected: {vocab_size}")
+
     val_dataset = PoetryDataset(val_text, cfg.model.seq_length)
     val_dataset.char2int = train_dataset.char2int
     val_dataset.int2char = train_dataset.int2char
@@ -114,6 +122,7 @@ def train(cfg: DictConfig):
     train_loader = DataLoader(train_dataset, batch_size=cfg.training.batch_size, sampler=train_sampler, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=cfg.training.batch_size, shuffle=False, drop_last=False)
 
+    # 4. Model Initialization
     model = PoetryLSTM(
         vocab_size, 
         cfg.model.embed_size, 
@@ -125,7 +134,6 @@ def train(cfg: DictConfig):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
 
-    # Initialize history and start epoch
     history = {
         'train_loss': [],
         'val_loss': [],
@@ -135,7 +143,6 @@ def train(cfg: DictConfig):
     start_epoch = 0
     best_val_loss = float('inf')
 
-    # Resume from checkpoint if requested
     if cfg.training.resume:
         checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint.pth')
         if os.path.exists(checkpoint_path):
@@ -178,7 +185,6 @@ def train(cfg: DictConfig):
             history['val_acc'].append(val_acc)
             history['val_ppl'].append(val_ppl)
             
-            # Checkpoint saving
             is_best = val_loss < best_val_loss
             if is_best:
                 best_val_loss = val_loss
