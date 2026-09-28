@@ -54,8 +54,9 @@ def train(cfg: DictConfig):
     
     # Resolve absolute paths
     data_path = os.path.join(orig_cwd, cfg.paths.data_path)
-    model_save_path = os.path.join(orig_cwd, cfg.paths.model_save_path)
-    plot_save_path = os.path.join(orig_cwd, cfg.paths.plot_save_path)
+    plot_dir = os.path.join(orig_cwd, cfg.paths.plots_dir)
+    os.makedirs(plot_dir, exist_ok=True)
+    plot_save_path = os.path.join(plot_dir, cfg.paths.plot_save_path)
 
     local_rank = setup()
     device = torch.device(f'cuda:{local_rank}')
@@ -132,7 +133,6 @@ def train(cfg: DictConfig):
             history['val_acc'].append(val_acc)
             history['val_ppl'].append(val_ppl)
         
-        model.train()
 
     if local_rank == 0:
         torch.save({
