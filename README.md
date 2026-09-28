@@ -61,13 +61,14 @@ The model uses a **Validation Set** (default: 10% of the input text).
 Once training is complete and `poetry_lstm.pth` is saved, use the generation script:
 
 ```bash
-python3 generate.py "ROMEO:" 0.7
+python3 generate.py "ROMEO:" 0.7 500
 ```
+
 - **Seed**: The first argument is the starting text (e.g., `"ROMEO:"`).
 - **Temperature**: The second argument (e.g., `0.7`) controls randomness. 
   - **Lower (< 0.7)**: More confident, predictable, and coherent.
   - **Higher (> 1.0)**: More creative, diverse, but potentially chaotic.
-
+- **Length**: The third argument (e.g., `500`) specifies how many characters to generate.
 ## 📂 Project Structure
 - `train.py`: DDP training pipeline with Hydra integration.
 - `model.py`: LSTM model architecture.
