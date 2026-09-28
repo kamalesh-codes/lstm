@@ -2,9 +2,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 
 class PoetryDataset(Dataset):
-    def __init__(self, file_path, seq_length):
-        with open(file_path, 'r', encoding='utf-8') as f:
-            self.text = f.read()
+    def __init__(self, text, seq_length):
+        self.text = text
         
         # Unique characters in the dataset
         self.chars = sorted(list(set(self.text)))
