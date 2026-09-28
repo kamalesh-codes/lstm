@@ -11,6 +11,7 @@ from tqdm import tqdm
 import os
 import math
 import hydra
+import urllib.request
 from omegaconf import DictConfig, OmegaConf
 
 def setup():
@@ -21,6 +22,21 @@ def setup():
 
 def cleanup():
     dist.destroy_process_group()
+
+def ensure_data(data_path):
+    """
+    Ensures that the dataset exists. If not, downloads the Tiny Shakespeare dataset.
+    """
+    if not os.path.exists(data_path):
+        print(f"Dataset not found at {data_path}. Downloading Tiny Shakespeare dataset...")
+        os.makedirs(os.path.dirname(data_path), exist_ok=True)
+        url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+        try:
+            urllib.request.urlretrieve(url, data_path)
+            print(f"Successfully downloaded dataset to {data_path}")
+        except Exception as e:
+            print(f"Error downloading dataset: {e}")
+            raise e
 
 def validate(model, loader, criterion, device, vocab_size):
     model.eval()
@@ -49,14 +65,17 @@ def validate(model, loader, criterion, device, vocab_size):
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def train(cfg: DictConfig):
-    # Hydra changes CWD to a run directory. We need the original root for data and saves.
     orig_cwd = hydra.utils.get_original_cwd()
     
-    # Resolve absolute paths
     data_path = os.path.join(orig_cwd, cfg.paths.data_path)
     plot_dir = os.path.join(orig_cwd, cfg.paths.plots_dir)
     os.makedirs(plot_dir, exist_ok=True)
     plot_save_path = os.path.join(plot_dir, cfg.paths.plot_save_path)
+
+    # Ensure data exists before starting distributed setup
+    # Only do this on rank 0 to avoid race conditions
+    if os.environ.get("LOCAL_RANK", "0") == "0":
+        ensure_data(data_path)
 
     local_rank = setup()
     device = torch.device(f'cuda:{local_rank}')
@@ -82,7 +101,6 @@ def train(cfg: DictConfig):
     train_loader = DataLoader(train_dataset, batch_size=cfg.training.batch_size, sampler=train_sampler, drop_last=True)
     val_loader = DataLoader(val_dataset, batch_size=cfg.training.batch_size, shuffle=False, drop_last=False)
 
-    # Model
     model = PoetryLSTM(
         vocab_size, 
         cfg.model.embed_size, 
@@ -133,6 +151,7 @@ def train(cfg: DictConfig):
             history['val_acc'].append(val_acc)
             history['val_ppl'].append(val_ppl)
         
+        model.train()
 
     if local_rank == 0:
         torch.save({
@@ -144,7 +163,7 @@ def train(cfg: DictConfig):
             'embed_size': cfg.model.embed_size,
             'hidden_size': cfg.model.hidden_size,
             'num_layers': cfg.model.num_layers
-        }, model_save_path)
+        }, os.path.join(orig_cwd, cfg.paths.model_save_path))
         
         fig, ax1 = plt.subplots(figsize=(12, 6))
         ax1.set_xlabel('Epoch')
