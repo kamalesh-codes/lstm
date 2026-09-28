@@ -4,13 +4,12 @@ import torch.optim as optim
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
+import matplotlib.pyplot as plt
 from utils import PoetryDataset
 from model import PoetryLSTM
 import os
 
 def setup():
-    # Initialize the process group for DDP
-    # nccl is the recommended backend for NVIDIA GPUs
     dist.init_process_group(backend='nccl')
     local_rank = int(os.environ["LOCAL_RANK"])
     torch.cuda.set_device(local_rank)
@@ -23,7 +22,7 @@ def train():
     # Hyperparameters
     FILE_PATH = 'data/input.txt'
     SEQ_LENGTH = 100
-    BATCH_SIZE = 64 # This is batch size PER GPU
+    BATCH_SIZE = 64 
     EMBED_SIZE = 64
     HIDDEN_SIZE = 256
     NUM_LAYERS = 2
@@ -36,22 +35,21 @@ def train():
     # Data
     dataset = PoetryDataset(FILE_PATH, SEQ_LENGTH)
     vocab_size = dataset.vocab_size
-    
-    # DistributedSampler ensures each GPU sees a unique slice of the data
     sampler = DistributedSampler(dataset, shuffle=True)
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, sampler=sampler, drop_last=True)
 
     # Model
     model = PoetryLSTM(vocab_size, EMBED_SIZE, HIDDEN_SIZE, NUM_LAYERS).to(device)
-    # Wrap model in DDP
     model = DDP(model, device_ids=[local_rank])
     
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
+    # Metric tracking
+    train_losses = []
+
     model.train()
     for epoch in range(EPOCHS):
-        # Required for DistributedSampler to shuffle differently every epoch
         sampler.set_epoch(epoch)
         total_loss = 0
         
@@ -65,19 +63,22 @@ def train():
             loss.backward()
             optimizer.step()
             
-            total_loss += loss.item()
+            loss_val = loss.item()
+            total_loss += loss_val
             
-            # Only print from the master process to avoid log spam
+            if local_rank == 0:
+                train_losses.append(loss_val)
+            
             if local_rank == 0 and (i + 1) % 100 == 0:
-                print(f"Epoch [{epoch+1}/{EPOCHS}], Batch [{i+1}/{len(loader)}], Loss: {loss.item():.4f}")
+                print(f"Epoch [{epoch+1}/{EPOCHS}], Batch [{i+1}/{len(loader)}], Loss: {loss_val:.4f}")
         
         avg_loss = total_loss / len(loader)
         if local_rank == 0:
             print(f"Epoch [{epoch+1}/{EPOCHS}] Average Loss: {avg_loss:.4f}")
 
-    # Save model only on the master process (rank 0)
+    # Save model and plot on master process
     if local_rank == 0:
-        # Use model.module to save the original PoetryLSTM without the DDP wrapper
+        # Save Weights
         torch.save({
             'model_state_dict': model.module.state_dict(),
             'chars': dataset.chars,
@@ -89,6 +90,17 @@ def train():
             'num_layers': NUM_LAYERS
         }, 'poetry_lstm.pth')
         print("Model saved to poetry_lstm.pth")
+
+        # Save Metrics Plot
+        plt.figure(figsize=(10, 5))
+        plt.plot(train_losses, label='Training Loss')
+        plt.title('Training Loss over Time')
+        plt.xlabel('Batch')
+        plt.ylabel('Loss')
+        plt.legend()
+        plt.grid(True)
+        plt.savefig('training_loss.png')
+        print("Loss plot saved as training_loss.png")
 
     cleanup()
 
