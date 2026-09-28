@@ -11,6 +11,7 @@ training:
   val_split: 0.1
 
 paths:
+  plots_dir: plots
   data_path: data/input.txt
   model_save_path: poetry_lstm.pth
   plot_save_path: training_metrics.png
