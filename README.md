@@ -1,15 +1,17 @@
-# ✍️ LSTM Poetry Generator
+# LSTM Poetry Generator
 
-A high-capacity, character-level language model built with PyTorch that learns to mimic the style of a given text (e.g., Shakespeare) and generate new, original poetry.
+A high-capacity, character-level language model implemented in PyTorch. This model learns the statistical properties of a provided text dataset to generate new text in a similar style.
 
-## 🚀 Features
-- **Architecture**: Deep LSTM with embedding layers.
-- **Multi-GPU Scaling**: Implemented with `DistributedDataParallel` (DDP) for maximum throughput on NVIDIA T4 GPUs.
-- **Configuration**: Fully managed by **Hydra**, allowing hyperparameter tuning directly from the command line.
-- **Metrics**: Tracks Training/Validation Loss, Accuracy, and Perplexity (PPL).
-- **Visualization**: Generates detailed training curves in the `plots/` directory.
+## Features
 
-## 🛠️ Installation
+- Architecture: Deep LSTM with embedding layers for sequence modeling.
+- Multi-GPU Scaling: DistributedDataParallel (DDP) implementation for optimized training on NVIDIA T4 GPUs.
+- Configuration: Managed by Hydra, allowing comprehensive hyperparameter overrides via command line.
+- Metrics: Tracks Training Loss, Validation Loss, Validation Accuracy, and Perplexity.
+- Visualization: Generates convergence curves for training and validation metrics.
+- Checkpointing: Support for periodic state saving and training resumption.
+
+## Installation
 
 1. Clone the repository:
    ```bash
@@ -22,58 +24,66 @@ A high-capacity, character-level language model built with PyTorch that learns t
    pip install torch matplotlib hydra-core tqdm
    ```
 
-## 🏋️ Training
+## Training
 
-The model uses `torchrun` to launch distributed training across multiple GPUs.
+The model is executed using `torchrun` to enable distributed training across available GPUs.
 
-### Basic Training
-To start training with the default high-capacity settings:
+### Standard Training
+To initiate training with the default high-capacity configuration:
 ```bash
 torchrun --nproc_per_node=2 train.py
 ```
 
-### Customizing Training (Hydra Overrides)
-You can override any setting in `conf/config.yaml` via the command line:
+### Resuming from Checkpoint
+To resume training from the last saved checkpoint (preserving epoch count, optimizer state, and metric history):
+```bash
+torchrun --nproc_per_node=2 train.py training.resume=true
+```
+
+### Hyperparameter Overrides
+Hydra allows for dynamic configuration changes at runtime:
 ```bash
 torchrun --nproc_per_node=2 train.py \
-    training.epochs=20 \
+    training.epochs=30 \
     training.batch_size=256 \
     model.hidden_size=512 \
     training.learning_rate=0.001
 ```
 
-## 📊 Evaluation
+## Evaluation
 
-### Does it use a separate test set?
-The model uses a **Validation Set** (default: 10% of the input text). 
+The model utilizes a validation split (default: 10%) to monitor generalization.
 
-**The evaluation process works as follows:**
-1. **Split**: The dataset is split into Training (90%) and Validation (10%) sets.
-2. **Per-Epoch Eval**: After every training epoch, the model is switched to `.eval()` mode.
-3. **Metrics**: It calculates the following on the unseen validation data:
-   - **Validation Loss**: Generalization error.
-   - **Accuracy**: Percentage of correctly predicted next characters.
-   - **Perplexity (PPL)**: A measure of how well the probability distribution predicts the sample.
-4. **Visuals**: A final plot is saved to `plots/training_metrics.png` showing the convergence of both training and validation metrics.
+1. Split: The dataset is divided into training and validation sets.
+2. Epoch Evaluation: After each training epoch, the model is evaluated on the unseen validation set.
+3. Metrics: The following are computed:
+   - Validation Loss: Measures the generalization error.
+   - Accuracy: The percentage of correctly predicted subsequent characters.
+   - Perplexity (PPL): An exponential measure of the cross-entropy loss, representing model uncertainty.
+4. Visuals: Convergence plots are saved to the `plots/` directory upon completion.
 
-## ✍️ Generating Text
+## Inference
 
-Once training is complete and `poetry_lstm.pth` is saved, use the generation script:
+Once the training process is complete and the model weights are saved as `poetry_lstm.pth`, text can be generated using the following command:
 
 ```bash
-python3 generate.py "ROMEO:" 0.7 500
+python3 generate.py "Seed Text:" 0.7 500
 ```
 
-- **Seed**: The first argument is the starting text (e.g., `"ROMEO:"`).
-- **Temperature**: The second argument (e.g., `0.7`) controls randomness. 
-  - **Lower (< 0.7)**: More confident, predictable, and coherent.
-  - **Higher (> 1.0)**: More creative, diverse, but potentially chaotic.
-- **Length**: The third argument (e.g., `500`) specifies how many characters to generate.
-## 📂 Project Structure
-- `train.py`: DDP training pipeline with Hydra integration.
-- `model.py`: LSTM model architecture.
-- `utils.py`: Dataset and preprocessing utilities.
+### Arguments:
+- Seed: The initial text sequence to prime the model.
+- Temperature: Controls the randomness of the output. 
+  - Values < 0.7: Result in more coherent and predictable text.
+  - Values > 1.0: Result in more diverse and creative text.
+- Length: The total number of characters to be generated.
+
+## Project Structure
+
+- `train.py`: Distributed training pipeline with checkpointing and Hydra integration.
+- `model.py`: LSTM network architecture.
+- `utils.py`: Dataset handling and preprocessing.
 - `generate.py`: Inference script for text generation.
-- `conf/`: Hydra configuration files.
-- `plots/`: Saved training metric graphs.
-- `data/`: Input text files.
+- `conf/`: YAML configuration files.
+- `plots/`: Saved metric visualizations.
+- `checkpoints/`: Saved model states for resumption.
+- `data/`: Input text datasets.

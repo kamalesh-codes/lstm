@@ -24,9 +24,6 @@ def cleanup():
     dist.destroy_process_group()
 
 def ensure_data(data_path):
-    """
-    Ensures that the dataset exists. If not, downloads the Tiny Shakespeare dataset.
-    """
     if not os.path.exists(data_path):
         print(f"Dataset not found at {data_path}. Downloading Tiny Shakespeare dataset...")
         os.makedirs(os.path.dirname(data_path), exist_ok=True)
@@ -63,6 +60,24 @@ def validate(model, loader, criterion, device, vocab_size):
     
     return avg_loss, accuracy, perplexity
 
+def save_checkpoint(state, is_best, checkpoint_dir, filename='checkpoint.pth'):
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    path = os.path.join(checkpoint_dir, filename)
+    torch.save(state, path)
+    if is_best:
+        torch.save(state, os.path.join(checkpoint_dir, 'model_best.pth'))
+
+def load_checkpoint(checkpoint_path, model, optimizer, device):
+    print(f"Loading checkpoint from {checkpoint_path}...")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    model.module.load_state_dict(checkpoint['model_state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    epoch = checkpoint['epoch']
+    history = checkpoint['history']
+    
+    return epoch, history
+
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def train(cfg: DictConfig):
     orig_cwd = hydra.utils.get_original_cwd()
@@ -71,16 +86,14 @@ def train(cfg: DictConfig):
     plot_dir = os.path.join(orig_cwd, cfg.paths.plots_dir)
     os.makedirs(plot_dir, exist_ok=True)
     plot_save_path = os.path.join(plot_dir, cfg.paths.plot_save_path)
+    checkpoint_dir = os.path.join(orig_cwd, cfg.paths.checkpoint_dir)
 
-    # Ensure data exists before starting distributed setup
-    # Only do this on rank 0 to avoid race conditions
     if os.environ.get("LOCAL_RANK", "0") == "0":
         ensure_data(data_path)
 
     local_rank = setup()
     device = torch.device(f'cuda:{local_rank}')
 
-    # Data Loading and Splitting
     with open(data_path, 'r', encoding='utf-8') as f:
         full_text = f.read()
     
@@ -112,15 +125,29 @@ def train(cfg: DictConfig):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
 
+    # Initialize history and start epoch
     history = {
         'train_loss': [],
         'val_loss': [],
         'val_acc': [],
         'val_ppl': []
     }
+    start_epoch = 0
+    best_val_loss = float('inf')
+
+    # Resume from checkpoint if requested
+    if cfg.training.resume:
+        checkpoint_path = os.path.join(checkpoint_dir, 'checkpoint.pth')
+        if os.path.exists(checkpoint_path):
+            start_epoch, history = load_checkpoint(checkpoint_path, model, optimizer, device)
+            if local_rank == 0:
+                print(f"Resumed from epoch {start_epoch}")
+        else:
+            if local_rank == 0:
+                print("Resume requested but no checkpoint found. Starting from scratch.")
 
     model.train()
-    for epoch in range(cfg.training.epochs):
+    for epoch in range(start_epoch, cfg.training.epochs):
         train_sampler.set_epoch(epoch)
         epoch_loss = 0
         
@@ -150,7 +177,21 @@ def train(cfg: DictConfig):
             history['val_loss'].append(val_loss)
             history['val_acc'].append(val_acc)
             history['val_ppl'].append(val_ppl)
-        
+            
+            # Checkpoint saving
+            is_best = val_loss < best_val_loss
+            if is_best:
+                best_val_loss = val_loss
+            
+            if (epoch + 1) % cfg.training.checkpoint_interval == 0 or is_best:
+                save_checkpoint({
+                    'epoch': epoch + 1,
+                    'model_state_dict': model.module.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'history': history,
+                    'best_val_loss': best_val_loss,
+                }, is_best, checkpoint_dir)
+
         model.train()
 
     if local_rank == 0:

@@ -9,8 +9,11 @@ training:
   learning_rate: 0.001
   epochs: 20
   val_split: 0.1
+  resume: false
+  checkpoint_interval: 2
 
 paths:
+  checkpoint_dir: checkpoints
   plots_dir: plots
   data_path: data/input.txt
   model_save_path: poetry_lstm.pth
