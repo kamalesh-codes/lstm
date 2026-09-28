@@ -1,0 +1,16 @@
+model:
+  embed_size: 64
+  hidden_size: 256
+  num_layers: 2
+  seq_length: 100
+
+training:
+  batch_size: 64
+  learning_rate: 0.002
+  epochs: 10
+  val_split: 0.1
+
+paths:
+  data_path: data/input.txt
+  model_save_path: poetry_lstm.pth
+  plot_save_path: training_metrics.png

@@ -10,6 +10,8 @@ from model import PoetryLSTM
 from tqdm import tqdm
 import os
 import math
+import hydra
+from omegaconf import DictConfig, OmegaConf
 
 def setup():
     dist.init_process_group(backend='nccl')
@@ -34,7 +36,6 @@ def validate(model, loader, criterion, device, vocab_size):
             loss = criterion(output.view(-1, vocab_size), y.view(-1))
             total_loss += loss.item()
             
-            # Accuracy
             preds = torch.argmax(output, dim=-1)
             correct = (preds == y).sum().item()
             total_acc += correct
@@ -46,52 +47,52 @@ def validate(model, loader, criterion, device, vocab_size):
     
     return avg_loss, accuracy, perplexity
 
-def train():
-    # Hyperparameters
-    FILE_PATH = 'data/input.txt'
-    SEQ_LENGTH = 100
-    BATCH_SIZE = 64 
-    EMBED_SIZE = 64
-    HIDDEN_SIZE = 256
-    NUM_LAYERS = 2
-    LEARNING_RATE = 0.002
-    EPOCHS = 10
-    VAL_SPLIT = 0.1 # 10% for validation
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def train(cfg: DictConfig):
+    # Hydra changes CWD to a run directory. We need the original root for data and saves.
+    orig_cwd = hydra.utils.get_original_cwd()
     
+    # Resolve absolute paths
+    data_path = os.path.join(orig_cwd, cfg.paths.data_path)
+    model_save_path = os.path.join(orig_cwd, cfg.paths.model_save_path)
+    plot_save_path = os.path.join(orig_cwd, cfg.paths.plot_save_path)
+
     local_rank = setup()
     device = torch.device(f'cuda:{local_rank}')
 
     # Data Loading and Splitting
-    with open(FILE_PATH, 'r', encoding='utf-8') as f:
+    with open(data_path, 'r', encoding='utf-8') as f:
         full_text = f.read()
     
-    split_idx = int(len(full_text) * (1 - VAL_SPLIT))
+    split_idx = int(len(full_text) * (1 - cfg.training.val_split))
     train_text = full_text[:split_idx]
     val_text = full_text[split_idx:]
     
-    # Use train_text to build vocabulary to avoid leakage
-    train_dataset = PoetryDataset(train_text, SEQ_LENGTH)
+    train_dataset = PoetryDataset(train_text, cfg.model.seq_length)
     vocab_size = train_dataset.vocab_size
-    # Ensure val_dataset uses the same mapping as train_dataset
-    val_dataset = PoetryDataset(val_text, SEQ_LENGTH)
+    
+    val_dataset = PoetryDataset(val_text, cfg.model.seq_length)
     val_dataset.char2int = train_dataset.char2int
     val_dataset.int2char = train_dataset.int2char
     val_dataset.data = torch.tensor([train_dataset.char2int.get(ch, 0) for ch in val_text], dtype=torch.long)
     val_dataset.vocab_size = vocab_size
 
-    # Loaders
     train_sampler = DistributedSampler(train_dataset, shuffle=True)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, sampler=train_sampler, drop_last=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, drop_last=False)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.training.batch_size, sampler=train_sampler, drop_last=True)
+    val_loader = DataLoader(val_dataset, batch_size=cfg.training.batch_size, shuffle=False, drop_last=False)
 
     # Model
-    model = PoetryLSTM(vocab_size, EMBED_SIZE, HIDDEN_SIZE, NUM_LAYERS).to(device)
+    model = PoetryLSTM(
+        vocab_size, 
+        cfg.model.embed_size, 
+        cfg.model.hidden_size, 
+        cfg.model.num_layers
+    ).to(device)
     model = DDP(model, device_ids=[local_rank])
     
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    optimizer = optim.Adam(model.parameters(), lr=cfg.training.learning_rate)
 
-    # Metric tracking
     history = {
         'train_loss': [],
         'val_loss': [],
@@ -100,12 +101,11 @@ def train():
     }
 
     model.train()
-    for epoch in range(EPOCHS):
+    for epoch in range(cfg.training.epochs):
         train_sampler.set_epoch(epoch)
         epoch_loss = 0
         
-        # Training Progress Bar
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{EPOCHS} [Train]", disable=(local_rank != 0))
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{cfg.training.epochs} [Train]", disable=(local_rank != 0))
         for i, (x, y) in enumerate(pbar):
             x, y = x.to(device), y.to(device)
             
@@ -123,8 +123,6 @@ def train():
                 pbar.set_postfix({'loss': f"{loss_val:.4f}"})
         
         avg_train_loss = epoch_loss / len(train_loader)
-        
-        # Evaluation
         val_loss, val_acc, val_ppl = validate(model, val_loader, criterion, device, vocab_size)
         
         if local_rank == 0:
@@ -136,7 +134,6 @@ def train():
         
         model.train()
 
-    # Save model and plots on master process
     if local_rank == 0:
         torch.save({
             'model_state_dict': model.module.state_dict(),
@@ -144,14 +141,12 @@ def train():
             'char2int': train_dataset.char2int,
             'int2char': train_dataset.int2char,
             'vocab_size': vocab_size,
-            'embed_size': EMBED_SIZE,
-            'hidden_size': HIDDEN_SIZE,
-            'num_layers': NUM_LAYERS
-        }, 'poetry_lstm.pth')
+            'embed_size': cfg.model.embed_size,
+            'hidden_size': cfg.model.hidden_size,
+            'num_layers': cfg.model.num_layers
+        }, model_save_path)
         
-        # Plotting
         fig, ax1 = plt.subplots(figsize=(12, 6))
-        
         ax1.set_xlabel('Epoch')
         ax1.set_ylabel('Loss', color='tab:blue')
         ax1.plot(history['train_loss'], label='Train Loss', color='tab:blue', marker='o')
@@ -167,8 +162,8 @@ def train():
         ax2.legend(loc='upper right')
         
         plt.title('Training and Validation Metrics')
-        plt.savefig('training_metrics.png')
-        print("Metrics plot saved as training_metrics.png")
+        plt.savefig(plot_save_path)
+        print(f"Metrics plot saved as {plot_save_path}")
 
     cleanup()
 
