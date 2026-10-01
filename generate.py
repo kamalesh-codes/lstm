@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import random
 import yaml
+import urllib.request
 import os
 
 def select_device():
@@ -20,6 +21,18 @@ def select_device():
     print("⚠️ No GPUs found. Falling back to CPU.")
     return torch.device('cpu')
 
+def ensure_data(data_path):
+    if not os.path.exists(data_path):
+        print(f"Dataset not found at {data_path}. Downloading Tiny Shakespeare dataset...")
+        os.makedirs(os.path.dirname(data_path), exist_ok=True)
+        url = "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt"
+        try:
+            urllib.request.urlretrieve(url, data_path)
+            print(f"Successfully downloaded dataset to {data_path}")
+        except Exception as e:
+            print(f"Error downloading dataset: {e}")
+            raise e
+
 def sample(probs, temperature=1.0):
     # Scale probabilities by temperature
     probs = torch.pow(probs, 1.0 / temperature)
@@ -37,6 +50,7 @@ def generate(seed_text, gen_length=500, temperature=1.0):
     with open('conf/config.yaml', 'r') as f:
         config = yaml.safe_load(f)
     
+    ensure_data('data/input.txt')
     with open('data/input.txt', 'r', encoding='utf-8') as f:
         text = f.read()
         chars = sorted(list(set(text)))
