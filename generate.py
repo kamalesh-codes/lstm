@@ -5,6 +5,8 @@ import yaml
 import urllib.request
 import os
 
+from model import PoetryLSTM
+
 def select_device():
     """
     Determines the best available device for inference.
