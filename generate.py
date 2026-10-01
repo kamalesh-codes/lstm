@@ -35,10 +35,10 @@ def generate(seed_text, gen_length=500, temperature=1.0):
     
     # 2. Load Checkpoint
     # map_location='cpu' is critical for loading GPU models on CPU machines
-    if not os.path.exists('poetry_lstm.pth'):
+    if not os.path.exists('model_best.pth'):
         raise FileNotFoundError("Model weights not found! Please train the model first.")
         
-    checkpoint = torch.load('poetry_lstm.pth', map_location=device)
+    checkpoint = torch.load('model_best.pth', map_location=device)
     
     chars = checkpoint['chars']
     char2int = checkpoint['char2int']
