@@ -196,6 +196,13 @@ def train(cfg: DictConfig):
                     'optimizer_state_dict': optimizer.state_dict(),
                     'history': history,
                     'best_val_loss': best_val_loss,
+                    'chars': train_dataset.chars,
+                    'char2int': train_dataset.char2int,
+                    'int2char': train_dataset.int2char,
+                    'vocab_size': vocab_size,
+                    'embed_size': cfg.model.embed_size,
+                    'hidden_size': cfg.model.hidden_size,
+                    'num_layers': cfg.model.num_layers,
                 }, is_best, checkpoint_dir)
 
         model.train()
