@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import random
-from model import PoetryLSTM
+import yaml
 import os
 
 def select_device():
@@ -33,22 +33,37 @@ def generate(seed_text, gen_length=500, temperature=1.0):
     # 1. Device Selection
     device = select_device()
     
-    # 2. Load Checkpoint
-    # map_location='cpu' is critical for loading GPU models on CPU machines
+    # 2. Load Config and Vocab (Fallbacks for slim checkpoints)
+    with open('conf/config.yaml', 'r') as f:
+        config = yaml.safe_load(f)
+    
+    with open('data/input.txt', 'r', encoding='utf-8') as f:
+        text = f.read()
+        chars = sorted(list(set(text)))
+        char2int = {ch: i for i, ch in enumerate(chars)}
+        int2char = {i: ch for i, ch in enumerate(chars)}
+        vocab_size = len(chars)
+
+    embed_size = config['model']['embed_size']
+    hidden_size = config['model']['hidden_size']
+    num_layers = config['model']['num_layers']
+    
+    # 3. Load Checkpoint
     if not os.path.exists('model_best.pth'):
         raise FileNotFoundError("Model weights not found! Please train the model first.")
         
     checkpoint = torch.load('model_best.pth', map_location=device)
     
-    chars = checkpoint['chars']
-    char2int = checkpoint['char2int']
-    int2char = checkpoint['int2char']
-    vocab_size = checkpoint['vocab_size']
-    embed_size = checkpoint['embed_size']
-    hidden_size = checkpoint['hidden_size']
-    num_layers = checkpoint['num_layers']
+    # Override with checkpoint values if available
+    chars = checkpoint.get('chars', chars)
+    char2int = checkpoint.get('char2int', char2int)
+    int2char = checkpoint.get('int2char', int2char)
+    vocab_size = checkpoint.get('vocab_size', vocab_size)
+    embed_size = checkpoint.get('embed_size', embed_size)
+    hidden_size = checkpoint.get('hidden_size', hidden_size)
+    num_layers = checkpoint.get('num_layers', num_layers)
     
-    # 3. Model Initialization
+    # 4. Model Initialization
     model = PoetryLSTM(vocab_size, embed_size, hidden_size, num_layers)
     
     # Handle DataParallel 'module.' prefix if it exists
@@ -59,8 +74,7 @@ def generate(seed_text, gen_length=500, temperature=1.0):
     model.to(device)
     model.eval()
     
-    # 4. Prepare Seed
-    # Convert seed characters to integers; use 0 (or most common) for unknown characters
+    # 5. Prepare Seed
     input_seq = torch.tensor(
         [char2int.get(ch, 0) for ch in seed_text], 
         dtype=torch.long
@@ -68,28 +82,18 @@ def generate(seed_text, gen_length=500, temperature=1.0):
     
     generated_text = seed_text
     
-    # 5. Generation Loop
+    # 6. Generation Loop
     with torch.no_grad():
-        # Initial pass to prime the LSTM with the seed sequence
         output, hidden = model(input_seq)
-        
-        # Start predicting from the last character of the seed
         last_char_logits = output[0, -1, :]
         probs = torch.softmax(last_char_logits, dim=-1)
         
         for _ in range(gen_length):
-            # Sample next character
             next_char_idx = sample(probs, temperature)
             next_char = int2char[next_char_idx]
             generated_text += next_char
-            
-            # Only feed the newly generated character back into the model
             input_seq = torch.tensor([[next_char_idx]], dtype=torch.long).to(device)
-            
-            # Forward pass using the state (hidden) from the previous step
             output, hidden = model(input_seq, hidden)
-            
-            # Get probabilities for the next character
             last_char_logits = output[0, -1, :]
             probs = torch.softmax(last_char_logits, dim=-1)
             
